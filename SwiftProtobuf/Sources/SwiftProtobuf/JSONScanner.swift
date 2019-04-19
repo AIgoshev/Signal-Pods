@@ -190,8 +190,9 @@ private func parseBytes(
     // a closing double quote.
     index = digitsStart
     try value.withUnsafeMutableBytes {
-        (dataPointer: UnsafeMutablePointer<UInt8>) in
-        var p = dataPointer
+        (body: UnsafeMutableRawBufferPointer) in
+      if let baseAddress = body.baseAddress, body.count > 0 {
+        var p = baseAddress.assumingMemoryBound(to: UInt8.self)
         var n = 0
         var chars = 0 // # chars in current group
         var padding = 0 // # padding '=' chars
@@ -201,7 +202,6 @@ private func parseBytes(
             if k < 0 {
                 switch digit {
                 case asciiDoubleQuote:
-                    source.formIndex(after: &index)
                     break digits
                 case asciiBackslash:
                     source.formIndex(after: &index)
@@ -221,7 +221,6 @@ private func parseBytes(
                     while true {
                         switch source[index] {
                         case asciiDoubleQuote:
-                            source.formIndex(after: &index)
                             break digits
                         case asciiSpace:
                             break
@@ -269,7 +268,9 @@ private func parseBytes(
             break
         }
         throw JSONDecodingError.malformedString
+      }
     }
+    source.formIndex(after: &index)
     return value
 }
 
@@ -848,15 +849,18 @@ internal struct JSONScanner {
         let s = try nextQuotedString()
         let raw = s.data(using: String.Encoding.utf8)!
         let n = try raw.withUnsafeBytes {
-          (bytes: UnsafePointer<UInt8>) -> UInt64? in
-          let buffer = UnsafeBufferPointer(start: bytes, count: raw.count)
-          var index = buffer.startIndex
-          let end = buffer.endIndex
-          if let u = try parseBareUInt64(source: buffer,
-                                         index: &index,
-                                         end: end) {
-            if index == end {
-              return u
+          (body: UnsafeRawBufferPointer) -> UInt64? in
+          if let baseAddress = body.baseAddress, body.count > 0 {
+            let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let buffer = UnsafeBufferPointer(start: bytes, count: body.count)
+            var index = buffer.startIndex
+            let end = buffer.endIndex
+            if let u = try parseBareUInt64(source: buffer,
+                                           index: &index,
+                                           end: end) {
+              if index == end {
+                return u
+              }
             }
           }
           return nil
@@ -907,15 +911,18 @@ internal struct JSONScanner {
         let s = try nextQuotedString()
         let raw = s.data(using: String.Encoding.utf8)!
         let n = try raw.withUnsafeBytes {
-          (bytes: UnsafePointer<UInt8>) -> Int64? in
-          let buffer = UnsafeBufferPointer(start: bytes, count: raw.count)
-          var index = buffer.startIndex
-          let end = buffer.endIndex
-          if let s = try parseBareSInt64(source: buffer,
-                                         index: &index,
-                                         end: end) {
-            if index == end {
-              return s
+          (body: UnsafeRawBufferPointer) -> Int64? in
+          if let baseAddress = body.baseAddress, body.count > 0 {
+            let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let buffer = UnsafeBufferPointer(start: bytes, count: body.count)
+            var index = buffer.startIndex
+            let end = buffer.endIndex
+            if let s = try parseBareSInt64(source: buffer,
+                                           index: &index,
+                                           end: end) {
+              if index == end {
+                return s
+              }
             }
           }
           return nil
@@ -971,16 +978,19 @@ internal struct JSONScanner {
         default:
           let raw = s.data(using: String.Encoding.utf8)!
           let n = try raw.withUnsafeBytes {
-            (bytes: UnsafePointer<UInt8>) -> Float? in
-            let buffer = UnsafeBufferPointer(start: bytes, count: raw.count)
-            var index = buffer.startIndex
-            let end = buffer.endIndex
-            if let d = try parseBareDouble(source: buffer,
-                                           index: &index,
-                                           end: end) {
-              let f = Float(d)
-              if index == end && f.isFinite {
-                return f
+            (body: UnsafeRawBufferPointer) -> Float? in
+            if let baseAddress = body.baseAddress, body.count > 0 {
+              let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+              let buffer = UnsafeBufferPointer(start: bytes, count: body.count)
+              var index = buffer.startIndex
+              let end = buffer.endIndex
+              if let d = try parseBareDouble(source: buffer,
+                                             index: &index,
+                                             end: end) {
+                let f = Float(d)
+                if index == end && f.isFinite {
+                  return f
+                }
               }
             }
             return nil
@@ -1042,15 +1052,18 @@ internal struct JSONScanner {
         default:
           let raw = s.data(using: String.Encoding.utf8)!
           let n = try raw.withUnsafeBytes {
-            (bytes: UnsafePointer<UInt8>) -> Double? in
-            let buffer = UnsafeBufferPointer(start: bytes, count: raw.count)
-            var index = buffer.startIndex
-            let end = buffer.endIndex
-            if let d = try parseBareDouble(source: buffer,
-                                           index: &index,
-                                           end: end) {
-              if index == end {
-                return d
+            (body: UnsafeRawBufferPointer) -> Double? in
+            if let baseAddress = body.baseAddress, body.count > 0 {
+              let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+              let buffer = UnsafeBufferPointer(start: bytes, count: body.count)
+              var index = buffer.startIndex
+              let end = buffer.endIndex
+              if let d = try parseBareDouble(source: buffer,
+                                             index: &index,
+                                             end: end) {
+                if index == end {
+                  return d
+                }
               }
             }
             return nil
@@ -1464,4 +1477,36 @@ internal struct JSONScanner {
 
   /// Advance the index past the next complete quoted string.
   ///
-  // Caveat:  
+  // Caveat:  This does not fully validate; it will accept
+  // strings that have malformed \ escapes.
+  //
+  // It would be nice to do better, but I don't think it's critical,
+  // since there are many reasons that strings (and other tokens for
+  // that matter) may be skippable but not parseable.  For example:
+  // Old clients that don't know new field types will skip fields
+  // they don't know; newer clients may reject the same input due to
+  // schema mismatches or other issues.
+  private mutating func skipString() throws {
+    if currentByte != asciiDoubleQuote {
+      throw JSONDecodingError.malformedString
+    }
+    advance()
+    while hasMoreContent {
+      let c = currentByte
+      switch c {
+      case asciiDoubleQuote:
+        advance()
+        return
+      case asciiBackslash:
+        advance()
+        guard hasMoreContent else {
+          throw JSONDecodingError.truncated
+        }
+        advance()
+      default:
+        advance()
+      }
+    }
+    throw JSONDecodingError.truncated
+  }
+}
