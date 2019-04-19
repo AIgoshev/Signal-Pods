@@ -1464,36 +1464,4 @@ internal struct JSONScanner {
 
   /// Advance the index past the next complete quoted string.
   ///
-  // Caveat:  This does not fully validate; it will accept
-  // strings that have malformed \ escapes.
-  //
-  // It would be nice to do better, but I don't think it's critical,
-  // since there are many reasons that strings (and other tokens for
-  // that matter) may be skippable but not parseable.  For example:
-  // Old clients that don't know new field types will skip fields
-  // they don't know; newer clients may reject the same input due to
-  // schema mismatches or other issues.
-  private mutating func skipString() throws {
-    if currentByte != asciiDoubleQuote {
-      throw JSONDecodingError.malformedString
-    }
-    advance()
-    while hasMoreContent {
-      let c = currentByte
-      switch c {
-      case asciiDoubleQuote:
-        advance()
-        return
-      case asciiBackslash:
-        advance()
-        guard hasMoreContent else {
-          throw JSONDecodingError.truncated
-        }
-        advance()
-      default:
-        advance()
-      }
-    }
-    throw JSONDecodingError.truncated
-  }
-}
+  // Caveat:  
